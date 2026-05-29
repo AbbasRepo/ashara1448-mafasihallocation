@@ -67,6 +67,7 @@ function buildNav() {
     { page:'my-allocation', label:'My Allocation',    icon:'📋', roles:['Member'] },
     { page:'members',       label:'Members',          icon:'👥', roles:['Admin'] },
     { page:'events',        label:'Events',           icon:'📅', roles:['Admin'] },
+    { page:'event-mafasih', label:'Event Mafasih',    icon:'⭐', roles:['Admin'] },
     { page:'relay-centers', label:'Relay Centers',    icon:'🏛️', roles:['Admin','Lead'] },
     { page:'jackets',       label:'Jackets',          icon:'🧥', roles:['Admin','Lead'] },
     { page:'finance',       label:'Finance',          icon:'💰', roles:['Admin','Lead'] },
@@ -88,7 +89,7 @@ function navigateTo(page) {
   });
   const titles = {
     dashboard:'Dashboard', allocation:'Mafasih Allocation', 'my-allocation':'My Allocation',
-    members:'Members', events:'Events', 'relay-centers':'Relay Centers & Zones',
+    members:'Members', events:'Events', 'event-mafasih':'Event Mafasih', 'relay-centers':'Relay Centers & Zones',
     jackets:'Jacket Management', finance:'Finance', reports:'Reports', 'my-finance':'My Contributions'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
@@ -99,7 +100,8 @@ function navigateTo(page) {
   const pages = {
     dashboard: renderDashboard, allocation: renderAllocation,
     'my-allocation': renderMyAllocation, members: renderMembers,
-    events: renderEvents, 'relay-centers': renderRelayCenters,
+    events: renderEvents, 'event-mafasih': renderEventMafasih,
+    'relay-centers': renderRelayCenters,
     jackets: renderJackets, finance: renderFinance,
     reports: renderReports, 'my-finance': renderMyFinance
   };
@@ -215,6 +217,66 @@ async function deleteEvent(id) {
   } catch(e) { showToast('Failed.','error'); }
 }
 
+// ─── EVENT MAFASIH (active shortlist for current event) ────────
+async function renderEventMafasih() {
+  if (!CU.eventId) return noEvent();
+  const eventMemberIts = CACHE.eventMembers
+    .filter(em => em.eventId === CU.eventId)
+    .map(em => em.itsId);
+
+  const inEvent = CACHE.members.filter(m => eventMemberIts.includes(m.itsId));
+  const notInEvent = CACHE.members.filter(m => !eventMemberIts.includes(m.itsId));
+
+  document.getElementById('page-body').innerHTML = `
+    <div class="alert-info">These are the Mafasih doing khidmat in <strong>${CACHE.activeEvent?esc(CACHE.activeEvent.name):'this event'}</strong>. Only people added here can be selected as Leads or assigned to zones.</div>
+    <div class="card">
+      <div class="card-title">Add Mafasih to Event</div>
+      <div class="flex-gap">
+        <select class="select-input" id="add-em-select" style="flex:1;min-width:220px">
+          <option value="">Select member to add…</option>
+          ${notInEvent.map(m=>`<option value="${m.itsId}">${esc(m.fullName)} (${m.itsId})</option>`).join('')}
+        </select>
+        <button class="btn-primary sm" onclick="addEventMafasih()">Add</button>
+      </div>
+      ${notInEvent.length===0?'<p class="form-hint mt8">All members are already in this event.</p>':''}
+    </div>
+    <div class="section-hd">Active Mafasih <span>${inEvent.length} member(s)</span></div>
+    ${inEvent.length ? `<div class="tbl-wrap"><table>
+      <thead><tr><th>ITS ID</th><th>Full Name</th><th>Jamaat</th><th>Role this Event</th><th></th></tr></thead>
+      <tbody>${inEvent.map(m=>{
+        const isLead = CACHE.relayCenters.some(rc => rc.eventId===CU.eventId && rc.leadIts===m.itsId);
+        return `<tr>
+          <td>${esc(m.itsId)}</td>
+          <td><strong>${esc(m.fullName)}</strong></td>
+          <td>${esc(m.jamaat||'—')}</td>
+          <td>${isLead?'<span class="badge-status bs-active">Lead</span>':'<span class="tag">Member</span>'}</td>
+          <td style="padding:8px 14px">
+            <button class="btn-danger" onclick="removeEventMafasih('${m.itsId}')" ${isLead?'disabled title="Remove as Lead first"':''}>Remove</button>
+          </td>
+        </tr>`;}).join('')}
+      </tbody></table></div>` : '<p class="empty-state">No Mafasih added to this event yet. Add members above.</p>'}`;
+}
+
+async function addEventMafasih() {
+  const itsId = v('add-em-select');
+  if (!itsId) return showToast('Select a member first.','error');
+  try {
+    await api('addEventMember', { eventId:CU.eventId, itsId, adminIts:CU.itsId });
+    showToast('Added to event.','success');
+    await loadCache(); renderEventMafasih();
+  } catch(e) { showToast('Failed: '+e.message,'error'); }
+}
+
+async function removeEventMafasih(itsId) {
+  if (!confirm('Remove this member from the event shortlist?')) return;
+  try {
+    await api('removeEventMember', { eventId:CU.eventId, itsId, adminIts:CU.itsId });
+    showToast('Removed.','success');
+    await loadCache(); renderEventMafasih();
+  } catch(e) { showToast('Failed.','error'); }
+}
+
+
 // ─── MEMBERS ──────────────────────────────────────────────────
 async function renderMembers() {
   document.getElementById('topbar-right').innerHTML =
@@ -265,8 +327,6 @@ function openMemberModal(m) {
         <input id="m-name" value="${esc(d.fullName||'')}"/></div>
       <div class="field-group"><label>WhatsApp No.</label>
         <input id="m-wa" value="${esc(d.whatsapp||'')}"/></div>
-      <div class="field-group"><label>Mobile</label>
-        <input id="m-mob" value="${esc(d.mobile||'')}"/></div>
       <div class="field-group"><label>Jamaat</label>
         <input id="m-jamaat" value="${esc(d.jamaat||'')}"/></div>
       <div class="field-group"><label>Gender</label>
@@ -278,8 +338,6 @@ function openMemberModal(m) {
         <input id="m-age" type="number" value="${d.age||''}"/></div>
       <div class="field-group"><label>Sr.</label>
         <input id="m-sr" value="${esc(d.sr||'')}"/></div>
-      <div class="field-group"><label>Test</label>
-        <input id="m-test" value="${esc(d.test||'')}"/></div>
       <div class="field-group"><label>Jamiaat</label>
         <input id="m-jamiaat" value="${esc(d.jamiaat||'')}"/></div>
     </div>`,
@@ -289,9 +347,9 @@ function openMemberModal(m) {
 async function saveMember() {
   const its = v('m-its'), name = v('m-name');
   if (!its||!name) return showToast('ITS ID and Full Name required.','error');
-  const data = { itsId:its, fullName:name, whatsapp:v('m-wa'), mobile:v('m-mob'),
+  const data = { itsId:its, fullName:name, whatsapp:v('m-wa'),
     jamaat:v('m-jamaat'), gender:v('m-gender'), age:v('m-age'), sr:v('m-sr'),
-    test:v('m-test'), jamiaat:v('m-jamiaat'), adminIts:CU.itsId };
+    jamiaat:v('m-jamiaat'), adminIts:CU.itsId };
   try {
     await api('saveMember', data);
     showToast('Member saved.','success');
@@ -354,6 +412,13 @@ function openRCModal(rc) {
   const d = rc || {};
   const eventMembers = CACHE.eventMembers.filter(em => em.eventId === CU.eventId);
   const membersInEvent = eventMembers.map(em => CACHE.members.find(m => m.itsId === em.itsId)).filter(Boolean);
+  if (!membersInEvent.length) {
+    openModal('No Event Mafasih Yet', `
+      <div class="alert-info">You need to add Mafasih to this event before creating a relay center, so you have someone to assign as Lead.</div>
+      <p style="font-size:14px">Go to <strong>Event Mafasih</strong> in the menu, add the members doing khidmat this event, then come back here.</p>`,
+      [{label:'Go to Event Mafasih', primary:true, fn:'closeModal();navigateTo("event-mafasih")'}]);
+    return;
+  }
   openModal(rc?'Edit Relay Center':'New Relay Center', `
     <div class="form-grid cols1">
       <div class="field-group"><label>Relay Center Name<span class="req">*</span></label>
@@ -910,11 +975,11 @@ async function loadAllocReport() {
     const res=await api('getAllocReport',{eventId:CU.eventId,date,session});
     const rows=res.rows||[];
     el.innerHTML=rows.length?`<div class="tbl-wrap"><table>
-      <thead><tr><th>Date</th><th>Session</th><th>Relay Center</th><th>Zone</th><th>Mafasih</th></tr></thead>
+      <thead><tr><th>Date</th><th>Session</th><th>Relay Center</th><th>Lead</th><th>Zone</th><th>Mafasih</th></tr></thead>
       <tbody>${rows.map(r=>`<tr>
         <td>${esc(r.date)}</td>
         <td><span class="badge-${r.session==='Morning'?'morning':'evening'}">${esc(r.session)}</span></td>
-        <td>${esc(r.rcName)}</td><td>${esc(r.zoneName)}</td><td>${esc(r.memberName)}</td>
+        <td>${esc(r.rcName)}</td><td>${esc(r.leadName||'—')}</td><td>${esc(r.zoneName)}</td><td>${esc(r.memberName)}</td>
       </tr>`).join('')}</tbody></table></div>`
       :'<p class="empty-state">No records found.</p>';
   } catch(e){el.innerHTML='<p class="empty-state">Failed.</p>';}
