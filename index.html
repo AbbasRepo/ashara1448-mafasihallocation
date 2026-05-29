@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ashara 1448 — Mafasih Allocation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen" class="screen active">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-logo">م</div>
+        <div>
+          <h1>Mafasih Allocation</h1>
+          <p>Ashara 1448 &middot; Khidmat Management</p>
+        </div>
+      </div>
+      <div class="field-group">
+        <label>ITS ID</label>
+        <input type="number" id="login-its" placeholder="Enter your ITS ID" />
+      </div>
+      <button class="btn-primary full" onclick="handleLogin()">
+        Sign In <span>→</span>
+      </button>
+      <div id="login-error" class="alert-error hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-screen" class="screen">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="sidebar-brand">
+        <div class="sidebar-logo">م</div>
+        <span>Mafasih</span>
+      </div>
+      <button class="sidebar-close" onclick="closeSidebar()">✕</button>
+    </div>
+    <div class="event-pill" id="event-pill">No active event</div>
+    <nav id="sidebar-nav"></nav>
+    <div class="sidebar-bottom">
+      <div class="user-info">
+        <div class="user-dot" id="user-dot">?</div>
+        <div>
+          <div id="sb-name" class="sb-name">—</div>
+          <div id="sb-role" class="sb-role">—</div>
+        </div>
+      </div>
+      <button class="btn-signout" onclick="handleLogout()">Sign Out</button>
+    </div>
+  </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+  <main class="main">
+    <header class="topbar">
+      <button class="menu-btn" onclick="openSidebar()">&#9776;</button>
+      <h2 id="page-title">Dashboard</h2>
+      <div id="topbar-right"></div>
+    </header>
+    <div id="page-body" class="page-body"></div>
+  </main>
+</div>
+
+<!-- MODAL -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h3 id="modal-title">—</h3>
+      <button onclick="closeModal()" class="modal-close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
