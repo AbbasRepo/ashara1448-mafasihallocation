@@ -122,8 +122,9 @@ async function loadCache() {
     CACHE.relayCenters = res.relayCenters || [];
     CACHE.zones        = res.zones        || [];
     CACHE.eventMembers = res.eventMembers || [];
+    CACHE.rcMembers    = res.rcMembers    || [];
     if (CACHE.activeEvent) CU.eventId = CACHE.activeEvent.id;
-  } catch(e) { CACHE = { members:[], events:[], relayCenters:[], zones:[], eventMembers:[] }; }
+  } catch(e) { CACHE = { members:[], events:[], relayCenters:[], zones:[], eventMembers:[], rcMembers:[] }; }
 }
 
 function updateEventPill() {
@@ -382,17 +383,19 @@ async function renderRelayCenters() {
       ${rcs.length ? rcs.map(rc => {
         const rcZones = zones.filter(z => z.rcId === rc.id);
         const lead = CACHE.members.find(m => m.itsId === rc.leadIts);
+        const poolCount = (CACHE.rcMembers||[]).filter(rm => rm.rcId === rc.id).length;
         return `
         <div class="card" style="padding:0;overflow:hidden">
           <div style="padding:14px 18px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:space-between">
             <div>
               <h4 style="font-family:var(--serif);font-size:17px">${esc(rc.name)}</h4>
               <div style="font-size:12px;color:var(--accent);margin-top:2px">
-                Lead: ${lead?esc(lead.fullName):'Unassigned'}
+                Lead: ${lead?esc(lead.fullName):'Unassigned'} &middot; ${poolCount} member(s) in pool
               </div>
             </div>
             ${CU.role==='Admin'?`
             <div class="flex-gap">
+              <button class="btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.3)" onclick="openPoolModal('${rc.id}')">Manage Members</button>
               <button class="btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.3)" onclick="openRCModal(${JSON.stringify(rc).replace(/"/g,'&quot;')})">Edit</button>
               <button class="btn-ghost" style="color:#fff;border-color:rgba(255,255,255,0.3)" onclick="openZoneModal('${rc.id}')">+ Zone</button>
               <button class="btn-danger" onclick="deleteRC('${rc.id}')">Delete</button>
@@ -450,6 +453,41 @@ async function deleteRC(id) {
   } catch(e) { showToast('Failed.','error'); }
 }
 
+// ─── RELAY CENTER MEMBER POOL ─────────────────────────────────
+function openPoolModal(rcId) {
+  const rc = CACHE.relayCenters.find(r => r.id === rcId);
+  const eventMemberIts = CACHE.eventMembers
+    .filter(em => em.eventId === CU.eventId).map(em => em.itsId);
+  const eventMembersList = CACHE.members.filter(m => eventMemberIts.includes(m.itsId));
+  const inPool = new Set((CACHE.rcMembers||[]).filter(rm => rm.rcId === rcId).map(rm => rm.itsId));
+
+  const rows = eventMembersList.map(m => {
+    const isLead = rc && rc.leadIts === m.itsId;
+    const checked = inPool.has(m.itsId) || isLead;
+    return `
+    <label class="pool-row">
+      <input type="checkbox" value="${m.itsId}" ${checked?'checked':''} ${isLead?'disabled':''} class="pool-chk"/>
+      <span>${esc(m.fullName)} <span class="tag">${m.itsId}</span></span>
+      ${isLead?'<span class="badge-status bs-active" style="margin-left:auto">Lead</span>':''}
+    </label>`;
+  }).join('');
+
+  openModal(`Manage Members — ${rc?esc(rc.name):''}`, `
+    <div class="alert-info">Select which event Mafasih are available to this relay center. The Lead is always included. A person can be in more than one relay center's pool.</div>
+    <div class="pool-list">${rows || '<p class="empty-state">No event Mafasih. Add them under Event Mafasih first.</p>'}</div>`,
+    [{label:'Save Pool', primary:true, fn:`savePool('${rcId}')`}]);
+}
+
+async function savePool(rcId) {
+  const checked = Array.from(document.querySelectorAll('.pool-chk:checked')).map(c => c.value);
+  try {
+    await api('saveRCPool', { rcId, eventId:CU.eventId, members:JSON.stringify(checked), adminIts:CU.itsId });
+    showToast('Member pool saved.','success');
+    closeModal(); await loadCache(); renderRelayCenters();
+  } catch(e) { showToast('Failed: '+e.message,'error'); }
+}
+
+
 function openZoneModal(rcId) {
   openModal('Add Zone', `
     <div class="form-grid cols1">
@@ -479,16 +517,12 @@ async function deleteZone(id) {
 // ─── ALLOCATION ───────────────────────────────────────────────
 let ALLOC_SESSION = 'Morning';
 let ALLOC_DATE = todayStr();
-let ALLOC_DATA = {};   // zoneId → itsId
+let ALLOC_DATA = {};   // zoneId → [itsId, itsId, ...]
 
 async function renderAllocation() {
   if (!CU.eventId) return noEvent();
   document.getElementById('topbar-right').innerHTML =
     `<button class="btn-primary sm" onclick="saveAllocation()">💾 Save Allocation</button>`;
-
-  const rcs = CACHE.relayCenters.filter(r => r.eventId === CU.eventId);
-  const myRCs = CU.role === 'Admin' ? rcs :
-    rcs.filter(r => r.leadIts === CU.itsId);
 
   document.getElementById('page-body').innerHTML = `
     <div class="flex-gap" style="margin-bottom:16px">
@@ -501,7 +535,7 @@ async function renderAllocation() {
         <button class="session-tab ${ALLOC_SESSION==='Evening'?'active-evening':''}" onclick="switchSession('Evening')">🌙 Evening (Night Majalis)</button>
       </div>
     </div>
-    <div class="alert-info">Selecting a Mafasih assigns them to that zone. Each person can only appear once per session. Saving will snapshot the current state before updating.</div>
+    <div class="alert-info">Add one or more Mafasih to each zone. A person can only be in one zone per session. Saving snapshots the previous state for history.</div>
     <div id="alloc-board" class="rc-grid"></div>`;
 
   await loadAllocData();
@@ -514,7 +548,10 @@ async function loadAllocData() {
   try {
     const res = await api('getAllocation', { eventId:CU.eventId, date:ALLOC_DATE, session:ALLOC_SESSION });
     ALLOC_DATA = {};
-    (res.allocation || []).forEach(a => { ALLOC_DATA[a.zoneId] = a.itsId; });
+    (res.allocation || []).forEach(a => {
+      if (!ALLOC_DATA[a.zoneId]) ALLOC_DATA[a.zoneId] = [];
+      ALLOC_DATA[a.zoneId].push(a.itsId);
+    });
     renderAllocBoard();
   } catch(e) { board.innerHTML = '<p class="empty-state">Failed to load.</p>'; }
 }
@@ -525,8 +562,6 @@ function renderAllocBoard() {
   const rcs = CACHE.relayCenters.filter(r => r.eventId === CU.eventId);
   const myRCs = CU.role === 'Admin' ? rcs : rcs.filter(r => r.leadIts === CU.itsId);
   const zones = CACHE.zones.filter(z => z.eventId === CU.eventId);
-  const eventMembers = CACHE.eventMembers.filter(em => em.eventId === CU.eventId);
-  const membersInEvent = eventMembers.map(em => CACHE.members.find(m => m.itsId === em.itsId)).filter(Boolean);
 
   board.innerHTML = myRCs.map(rc => {
     const rcZones = zones.filter(z => z.rcId === rc.id);
@@ -537,54 +572,88 @@ function renderAllocBoard() {
         <h4>${esc(rc.name)}</h4>
         <span class="lead-tag">Lead: ${lead?esc(lead.fullName):'—'}</span>
       </div>
-      ${rcZones.map(z => {
-        const assigned = ALLOC_DATA[z.id] || '';
-        const opts = membersInEvent.map(m =>
-          `<option value="${m.itsId}" ${assigned===m.itsId?'selected':''}>${esc(m.fullName)}</option>`
-        ).join('');
-        return `
-        <div class="zone-row">
-          <span class="zone-name">${esc(z.name)}</span>
-          <select class="zone-select" id="zone-sel-${z.id}" onchange="onZoneChange('${z.id}',this.value)">
-            <option value="">— Unassigned —</option>
-            ${opts}
-          </select>
-        </div>`;
-      }).join('')}
+      ${rcZones.map(z => renderZoneBlock(z)).join('')}
       ${!rcZones.length?'<div style="padding:12px 16px;color:var(--muted);font-size:13px">No zones set up.</div>':''}
     </div>`;
   }).join('') || '<p class="empty-state">No relay centers assigned to you for this event.</p>';
 }
 
-function onZoneChange(zoneId, itsId) {
-  // Check duplicate within session
-  if (itsId) {
-    const existing = Object.entries(ALLOC_DATA).find(([zId, id]) => id === itsId && zId !== zoneId);
-    if (existing) {
-      const zones = CACHE.zones;
-      const conflictZone = zones.find(z => z.id === existing[0]);
-      showToast(`${getMemberName(itsId)} is already assigned to ${conflictZone?conflictZone.name:'another zone'} this session.`,'error');
-      document.getElementById(`zone-sel-${zoneId}`).value = ALLOC_DATA[zoneId] || '';
-      return;
-    }
+function renderZoneBlock(zone) {
+  const assigned = ALLOC_DATA[zone.id] || [];
+  const chips = assigned.map(itsId => {
+    const name = getMemberName(itsId);
+    return `<span class="member-chip">${esc(name)}<button onclick="removeFromZone('${zone.id}','${itsId}')" title="Remove">✕</button></span>`;
+  }).join('');
+
+  return `
+  <div class="zone-block">
+    <div class="zone-block-head">
+      <span class="zone-name">${esc(zone.name)}</span>
+      <span class="zone-count">${assigned.length} assigned</span>
+    </div>
+    <div class="zone-chips">${chips || '<span class="zone-empty">No one assigned yet</span>'}</div>
+    <div class="zone-add">
+      <select class="zone-add-select" id="zone-add-${zone.id}">
+        <option value="">+ Add Mafasih…</option>
+        ${availableMembers(zone.id).map(m=>`<option value="${m.itsId}">${esc(m.fullName)}</option>`).join('')}
+      </select>
+      <button class="btn-ghost" onclick="addToZone('${zone.id}')">Add</button>
+    </div>
+  </div>`;
+}
+
+// Members in this zone's relay-center pool, not yet assigned to ANY zone this session
+function availableMembers(zoneId) {
+  const zone = CACHE.zones.find(z => z.id === zoneId);
+  if (!zone) return [];
+  // Pool for this zone's relay center
+  const poolIts = (CACHE.rcMembers||[])
+    .filter(rm => rm.rcId === zone.rcId)
+    .map(rm => rm.itsId);
+  // Include the lead automatically even if not explicitly in pool rows
+  const rc = CACHE.relayCenters.find(r => r.id === zone.rcId);
+  if (rc && rc.leadIts && !poolIts.includes(rc.leadIts)) poolIts.push(rc.leadIts);
+
+  const poolMembers = poolIts.map(its => CACHE.members.find(m => m.itsId === its)).filter(Boolean);
+
+  const assignedAnywhere = new Set();
+  Object.values(ALLOC_DATA).forEach(arr => (arr||[]).forEach(id => assignedAnywhere.add(id)));
+  return poolMembers.filter(m => !assignedAnywhere.has(m.itsId));
+}
+
+function addToZone(zoneId) {
+  const sel = document.getElementById(`zone-add-${zoneId}`);
+  const itsId = sel.value;
+  if (!itsId) return;
+  // Guard: not already in another zone this session
+  const existing = Object.entries(ALLOC_DATA).find(([zId, arr]) => zId!==zoneId && (arr||[]).includes(itsId));
+  if (existing) {
+    const conflictZone = CACHE.zones.find(z=>z.id===existing[0]);
+    showToast(`${getMemberName(itsId)} is already in ${conflictZone?conflictZone.name:'another zone'} this session.`,'error');
+    return;
   }
-  ALLOC_DATA[zoneId] = itsId;
+  if (!ALLOC_DATA[zoneId]) ALLOC_DATA[zoneId] = [];
+  if (!ALLOC_DATA[zoneId].includes(itsId)) ALLOC_DATA[zoneId].push(itsId);
+  renderAllocBoard();
+}
+
+function removeFromZone(zoneId, itsId) {
+  if (ALLOC_DATA[zoneId]) {
+    ALLOC_DATA[zoneId] = ALLOC_DATA[zoneId].filter(id => id !== itsId);
+  }
+  renderAllocBoard();
 }
 
 function switchSession(session) {
   ALLOC_SESSION = session;
-  document.querySelectorAll('.session-tab').forEach(t => {
-    t.className = 'session-tab';
-    if (t.textContent.includes('Morning') && session==='Morning') t.classList.add('active-morning');
-    if (t.textContent.includes('Evening') && session==='Evening') t.classList.add('active-evening');
-  });
   loadAllocData();
 }
 
 async function saveAllocation() {
-  const entries = Object.entries(ALLOC_DATA)
-    .filter(([zId,itsId]) => itsId)
-    .map(([zoneId,itsId]) => ({zoneId, itsId}));
+  const entries = [];
+  Object.entries(ALLOC_DATA).forEach(([zoneId, arr]) => {
+    (arr||[]).forEach(itsId => { if (itsId) entries.push({ zoneId, itsId }); });
+  });
   try {
     await api('saveAllocation', {
       eventId:CU.eventId, date:ALLOC_DATE,
