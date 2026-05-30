@@ -227,6 +227,16 @@ tr:hover td{background:#fafaf8}
 .pool-row input[type=checkbox]{width:17px;height:17px;cursor:pointer;accent-color:var(--primary)}
 .pool-row input:disabled{cursor:not-allowed}
 
+/* ALLOCATION VIEW */
+.av-zone{margin-bottom:14px}
+.av-zone:last-child{margin-bottom:0}
+.av-zone-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;
+  padding-bottom:6px;border-bottom:1px solid var(--border)}
+.av-zone-head span:first-child{font-weight:600;font-size:14px}
+.av-members{display:flex;flex-wrap:wrap;gap:8px}
+.av-member{display:flex;align-items:center;gap:8px;padding:7px 12px;
+  background:var(--surface2);border-radius:8px;font-size:13.5px}
+
 /* FINANCE */
 .fund-header{display:flex;align-items:center;justify-content:space-between;
   padding:14px 18px;background:var(--primary);color:#fff;border-radius:10px 10px 0 0}

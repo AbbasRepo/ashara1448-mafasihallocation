@@ -64,6 +64,7 @@ function buildNav() {
   const all = [
     { page:'dashboard',     label:'Dashboard',       icon:'📊', roles:['Admin','Lead'] },
     { page:'allocation',    label:'Allocation',       icon:'🗂️', roles:['Admin','Lead'] },
+    { page:'allocation-view',label:'Allocation View', icon:'👁️', roles:['Admin','Lead'] },
     { page:'my-allocation', label:'My Allocation',    icon:'📋', roles:['Member'] },
     { page:'members',       label:'Members',          icon:'👥', roles:['Admin'] },
     { page:'events',        label:'Events',           icon:'📅', roles:['Admin'] },
@@ -88,7 +89,7 @@ function navigateTo(page) {
     n.classList.toggle('active', n.dataset.page === page);
   });
   const titles = {
-    dashboard:'Dashboard', allocation:'Mafasih Allocation', 'my-allocation':'My Allocation',
+    dashboard:'Dashboard', allocation:'Mafasih Allocation', 'allocation-view':'Allocation View', 'my-allocation':'My Allocation',
     members:'Members', events:'Events', 'event-mafasih':'Event Mafasih', 'relay-centers':'Relay Centers & Zones',
     jackets:'Jacket Management', finance:'Finance', reports:'Reports', 'my-finance':'My Contributions'
   };
@@ -99,6 +100,7 @@ function navigateTo(page) {
   body.innerHTML = '<div class="loading">Loading…</div>';
   const pages = {
     dashboard: renderDashboard, allocation: renderAllocation,
+    'allocation-view': renderAllocationView,
     'my-allocation': renderMyAllocation, members: renderMembers,
     events: renderEvents, 'event-mafasih': renderEventMafasih,
     'relay-centers': renderRelayCenters,
@@ -593,13 +595,55 @@ function renderZoneBlock(zone) {
     </div>
     <div class="zone-chips">${chips || '<span class="zone-empty">No one assigned yet</span>'}</div>
     <div class="zone-add">
-      <select class="zone-add-select" id="zone-add-${zone.id}">
-        <option value="">+ Add Mafasih…</option>
-        ${availableMembers(zone.id).map(m=>`<option value="${m.itsId}">${esc(m.fullName)}</option>`).join('')}
-      </select>
-      <button class="btn-ghost" onclick="addToZone('${zone.id}')">Add</button>
+      <button class="btn-ghost" style="width:100%" onclick="openZonePicker('${zone.id}')">+ Add Mafasih (multi-select)</button>
     </div>
   </div>`;
+}
+
+// Multi-select picker for a zone
+function openZonePicker(zoneId) {
+  const zone = CACHE.zones.find(z => z.id === zoneId);
+  const rc = CACHE.relayCenters.find(r => r.id === zone.rcId);
+  const avail = availableMembers(zoneId);
+  const already = new Set(ALLOC_DATA[zoneId] || []);
+  // Also show currently-assigned people (so they can be unticked)
+  const assignedMembers = (ALLOC_DATA[zoneId]||[]).map(its=>CACHE.members.find(m=>m.itsId===its)).filter(Boolean);
+  const all = [...assignedMembers, ...avail.filter(m=>!already.has(m.itsId))];
+
+  if (!all.length) {
+    openModal(`${zone?esc(zone.name):'Zone'}`, `
+      <div class="alert-info">No available Mafasih for this zone. Everyone in this relay center's pool is either already placed in another zone this session, or the pool is empty. Add members to the pool under <strong>Relay Centers → Manage Members</strong>.</div>`,
+      []);
+    return;
+  }
+
+  const list = all.map(m => `
+    <label class="pool-row">
+      <input type="checkbox" value="${m.itsId}" ${already.has(m.itsId)?'checked':''} class="zpick-chk"/>
+      <span>${esc(m.fullName)} <span class="tag">${m.itsId}</span></span>
+      ${rc && rc.leadIts===m.itsId?'<span class="badge-status bs-active" style="margin-left:auto">Lead</span>':''}
+    </label>`).join('');
+
+  openModal(`Assign to ${zone?esc(zone.name):'Zone'}`, `
+    <div class="alert-info">Tick everyone who should be in this zone this session. Untick to remove. Save when done — nothing is written until you click "Save Allocation" on the board.</div>
+    <div class="pool-list">${list}</div>`,
+    [{label:'Apply Selection', primary:true, fn:`applyZonePicker('${zoneId}')`}]);
+}
+
+function applyZonePicker(zoneId) {
+  const picked = Array.from(document.querySelectorAll('.zpick-chk:checked')).map(c=>c.value);
+  // Conflict guard: ensure none are in another zone this session
+  for (const itsId of picked) {
+    const conflict = Object.entries(ALLOC_DATA).find(([zId, arr]) => zId!==zoneId && (arr||[]).includes(itsId));
+    if (conflict) {
+      const cz = CACHE.zones.find(z=>z.id===conflict[0]);
+      showToast(`${getMemberName(itsId)} is already in ${cz?cz.name:'another zone'} this session.`,'error');
+      return;
+    }
+  }
+  ALLOC_DATA[zoneId] = picked;
+  closeModal();
+  renderAllocBoard();
 }
 
 // Members in this zone's relay-center pool, not yet assigned to ANY zone this session
@@ -619,22 +663,6 @@ function availableMembers(zoneId) {
   const assignedAnywhere = new Set();
   Object.values(ALLOC_DATA).forEach(arr => (arr||[]).forEach(id => assignedAnywhere.add(id)));
   return poolMembers.filter(m => !assignedAnywhere.has(m.itsId));
-}
-
-function addToZone(zoneId) {
-  const sel = document.getElementById(`zone-add-${zoneId}`);
-  const itsId = sel.value;
-  if (!itsId) return;
-  // Guard: not already in another zone this session
-  const existing = Object.entries(ALLOC_DATA).find(([zId, arr]) => zId!==zoneId && (arr||[]).includes(itsId));
-  if (existing) {
-    const conflictZone = CACHE.zones.find(z=>z.id===existing[0]);
-    showToast(`${getMemberName(itsId)} is already in ${conflictZone?conflictZone.name:'another zone'} this session.`,'error');
-    return;
-  }
-  if (!ALLOC_DATA[zoneId]) ALLOC_DATA[zoneId] = [];
-  if (!ALLOC_DATA[zoneId].includes(itsId)) ALLOC_DATA[zoneId].push(itsId);
-  renderAllocBoard();
 }
 
 function removeFromZone(zoneId, itsId) {
@@ -662,6 +690,119 @@ async function saveAllocation() {
     });
     showToast('Allocation saved and history recorded.','success');
   } catch(e) { showToast('Save failed: '+e.message,'error'); }
+}
+
+// ─── ALLOCATION VIEW (read-only, filterable) ──────────────────
+let AV_DATE = todayStr();
+let AV_SESSION = '';
+let AV_RC = '';
+let AV_ZONE = '';
+
+async function renderAllocationView() {
+  if (!CU.eventId) return noEvent();
+  const rcs = CACHE.relayCenters.filter(r => r.eventId === CU.eventId);
+  const myRCs = CU.role === 'Admin' ? rcs : rcs.filter(r => r.leadIts === CU.itsId);
+  const zones = CACHE.zones.filter(z => z.eventId === CU.eventId && myRCs.some(rc=>rc.id===z.rcId));
+
+  document.getElementById('page-body').innerHTML = `
+    <div class="card">
+      <div class="form-grid">
+        <div class="field-group"><label>Date</label>
+          <input type="date" id="av-date" value="${AV_DATE}" onchange="AV_DATE=this.value;loadAllocationView()"/></div>
+        <div class="field-group"><label>Session</label>
+          <select id="av-session" onchange="AV_SESSION=this.value;loadAllocationView()">
+            <option value="">All Sessions</option>
+            <option value="Morning" ${AV_SESSION==='Morning'?'selected':''}>Morning</option>
+            <option value="Evening" ${AV_SESSION==='Evening'?'selected':''}>Evening</option>
+          </select></div>
+        <div class="field-group"><label>Relay Center</label>
+          <select id="av-rc" onchange="AV_RC=this.value;AV_ZONE='';loadAllocationView()">
+            <option value="">All Relay Centers</option>
+            ${myRCs.map(rc=>`<option value="${rc.id}" ${AV_RC===rc.id?'selected':''}>${esc(rc.name)}</option>`).join('')}
+          </select></div>
+        <div class="field-group"><label>Zone</label>
+          <select id="av-zone" onchange="AV_ZONE=this.value;loadAllocationView()">
+            <option value="">All Zones</option>
+            ${zones.filter(z=>!AV_RC||z.rcId===AV_RC).map(z=>`<option value="${z.id}" ${AV_ZONE===z.id?'selected':''}>${esc(z.name)}</option>`).join('')}
+          </select></div>
+      </div>
+    </div>
+    <div id="av-result"></div>`;
+
+  loadAllocationView();
+}
+
+async function loadAllocationView() {
+  const el = document.getElementById('av-result');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Loading…</div>';
+
+  const sessions = AV_SESSION ? [AV_SESSION] : ['Morning','Evening'];
+  let allRows = [];
+  try {
+    for (const sess of sessions) {
+      const res = await api('getAllocation', { eventId:CU.eventId, date:AV_DATE, session:sess });
+      (res.allocation||[]).forEach(a => allRows.push({ ...a, session:sess }));
+    }
+  } catch(e) { el.innerHTML = '<p class="empty-state">Failed to load.</p>'; return; }
+
+  // Build a structured view: RC → Zone → members
+  const rcs = CACHE.relayCenters.filter(r => r.eventId === CU.eventId);
+  const myRCs = CU.role === 'Admin' ? rcs : rcs.filter(r => r.leadIts === CU.itsId);
+  const zones = CACHE.zones.filter(z => z.eventId === CU.eventId);
+
+  let visibleRCs = myRCs;
+  if (AV_RC) visibleRCs = visibleRCs.filter(rc => rc.id === AV_RC);
+
+  let html = '';
+  visibleRCs.forEach(rc => {
+    const lead = CACHE.members.find(m => m.itsId === rc.leadIts);
+    let rcZones = zones.filter(z => z.rcId === rc.id);
+    if (AV_ZONE) rcZones = rcZones.filter(z => z.id === AV_ZONE);
+    if (!rcZones.length) return;
+
+    // Does this RC have any allocation in the filtered set?
+    let rcHtml = '';
+    rcZones.forEach(zone => {
+      sessions.forEach(sess => {
+        const members = allRows
+          .filter(r => r.zoneId === zone.id && r.session === sess)
+          .map(r => CACHE.members.find(m => m.itsId === r.itsId))
+          .filter(Boolean);
+        if (!members.length) return;
+        rcHtml += `
+          <div class="av-zone">
+            <div class="av-zone-head">
+              <span>${esc(zone.name)}</span>
+              <span class="badge-${sess==='Morning'?'morning':'evening'}">${sess}</span>
+              <span class="zone-count">${members.length}</span>
+            </div>
+            <div class="av-members">
+              ${members.map(m => {
+                const isLead = rc.leadIts === m.itsId;
+                return `<div class="av-member">
+                  <span>${esc(m.fullName)}</span>
+                  ${isLead?'<span class="badge-status bs-active">Lead</span>':'<span class="tag">Member</span>'}
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+      });
+    });
+
+    if (rcHtml) {
+      html += `
+        <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+          <div style="padding:13px 18px;background:var(--primary);color:#fff">
+            <h4 style="font-family:var(--serif);font-size:16px">${esc(rc.name)}</h4>
+            <div style="font-size:12px;color:var(--accent);margin-top:2px">Lead: ${lead?esc(lead.fullName):'—'}</div>
+          </div>
+          <div style="padding:14px 18px">${rcHtml}</div>
+        </div>`;
+    }
+  });
+
+  el.innerHTML = html || '<p class="empty-state">No allocation found for the selected filters.</p>';
 }
 
 // ─── MY ALLOCATION (Member) ────────────────────────────────────
