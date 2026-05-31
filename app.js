@@ -65,7 +65,9 @@ function buildNav() {
     { page:'dashboard',     label:'Dashboard',       icon:'📊', roles:['Admin','Lead'] },
     { page:'allocation',    label:'Allocation',       icon:'🗂️', roles:['Admin','Lead'] },
     { page:'allocation-view',label:'Allocation View', icon:'👁️', roles:['Admin','Lead'] },
+    { page:'session-report',label:'Session Report',   icon:'📝', roles:['Admin','Lead'] },
     { page:'my-allocation', label:'My Allocation',    icon:'📋', roles:['Member'] },
+    { page:'my-reports',    label:'My Reports',       icon:'🧾', roles:['Member'] },
     { page:'members',       label:'Members',          icon:'👥', roles:['Admin'] },
     { page:'events',        label:'Events',           icon:'📅', roles:['Admin'] },
     { page:'event-mafasih', label:'Event Mafasih',    icon:'⭐', roles:['Admin'] },
@@ -89,7 +91,8 @@ function navigateTo(page) {
     n.classList.toggle('active', n.dataset.page === page);
   });
   const titles = {
-    dashboard:'Dashboard', allocation:'Mafasih Allocation', 'allocation-view':'Allocation View', 'my-allocation':'My Allocation',
+    dashboard:'Dashboard', allocation:'Mafasih Allocation', 'allocation-view':'Allocation View',
+    'session-report':'Session Report', 'my-reports':'My Reports', 'my-allocation':'My Allocation',
     members:'Members', events:'Events', 'event-mafasih':'Event Mafasih', 'relay-centers':'Relay Centers & Zones',
     jackets:'Jacket Management', finance:'Finance', reports:'Reports', 'my-finance':'My Contributions'
   };
@@ -101,6 +104,7 @@ function navigateTo(page) {
   const pages = {
     dashboard: renderDashboard, allocation: renderAllocation,
     'allocation-view': renderAllocationView,
+    'session-report': renderSessionReport, 'my-reports': renderMyReports,
     'my-allocation': renderMyAllocation, members: renderMembers,
     events: renderEvents, 'event-mafasih': renderEventMafasih,
     'relay-centers': renderRelayCenters,
@@ -803,6 +807,146 @@ async function loadAllocationView() {
   });
 
   el.innerHTML = html || '<p class="empty-state">No allocation found for the selected filters.</p>';
+}
+
+// ─── SESSION REPORT (Lead/Admin) ──────────────────────────────
+let SR_DATE = todayStr();
+let SR_SESSION = 'Morning';
+let SR_RC = '';
+let SR_DATA = [];      // [{itsId, memberName, zoneName, jacketWorn, attendance, remarks}]
+let SR_SUBMITTED = false;
+
+async function renderSessionReport() {
+  if (!CU.eventId) return noEvent();
+  const rcs = CACHE.relayCenters.filter(r => r.eventId === CU.eventId);
+  const myRCs = CU.role === 'Admin' ? rcs : rcs.filter(r => r.leadIts === CU.itsId);
+  if (!myRCs.length) {
+    document.getElementById('page-body').innerHTML = '<p class="empty-state">You are not assigned as Lead of any relay center this event.</p>';
+    return;
+  }
+  if (!SR_RC || !myRCs.some(rc=>rc.id===SR_RC)) SR_RC = myRCs[0].id;
+
+  document.getElementById('page-body').innerHTML = `
+    <div class="card">
+      <div class="form-grid cols3">
+        <div class="field-group"><label>Relay Center</label>
+          <select id="sr-rc" onchange="SR_RC=this.value;loadSessionReport()">
+            ${myRCs.map(rc=>`<option value="${rc.id}" ${SR_RC===rc.id?'selected':''}>${esc(rc.name)}</option>`).join('')}
+          </select></div>
+        <div class="field-group"><label>Date</label>
+          <input type="date" id="sr-date" value="${SR_DATE}" onchange="SR_DATE=this.value;loadSessionReport()"/></div>
+        <div class="field-group"><label>Session</label>
+          <select id="sr-session" onchange="SR_SESSION=this.value;loadSessionReport()">
+            <option value="Morning" ${SR_SESSION==='Morning'?'selected':''}>Morning</option>
+            <option value="Evening" ${SR_SESSION==='Evening'?'selected':''}>Evening</option>
+          </select></div>
+      </div>
+    </div>
+    <div id="sr-result"></div>`;
+  loadSessionReport();
+}
+
+async function loadSessionReport() {
+  const el = document.getElementById('sr-result');
+  el.innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const res = await api('getSessionReport', { eventId:CU.eventId, rcId:SR_RC, date:SR_DATE, session:SR_SESSION });
+    SR_DATA = res.members || [];
+    SR_SUBMITTED = res.submitted || false;
+    renderSessionReportTable();
+  } catch(e) { el.innerHTML = '<p class="empty-state">Failed to load.</p>'; }
+}
+
+function renderSessionReportTable() {
+  const el = document.getElementById('sr-result');
+  if (!SR_DATA.length) {
+    el.innerHTML = '<p class="empty-state">No Mafasih were allocated to this relay center for this session, so there is nothing to report.</p>';
+    return;
+  }
+  const locked = SR_SUBMITTED && CU.role !== 'Admin';
+
+  el.innerHTML = `
+    ${SR_SUBMITTED ? `<div class="alert-info">${CU.role==='Admin'?'This report is submitted. As Admin you can still edit and re-save it.':'This report has been submitted and is locked.'}</div>` : ''}
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Mafasih</th><th>Zone</th><th>Jacket Worn</th><th>Attendance</th><th>Remarks</th></tr></thead>
+        <tbody>
+          ${SR_DATA.map((m,i)=>`
+            <tr>
+              <td><strong>${esc(m.memberName)}</strong></td>
+              <td>${esc(m.zoneName)}</td>
+              <td>
+                <select class="select-input" id="sr-jacket-${i}" ${locked?'disabled':''}>
+                  <option value="">—</option>
+                  <option value="Yes" ${m.jacketWorn==='Yes'?'selected':''}>Yes</option>
+                  <option value="No" ${m.jacketWorn==='No'?'selected':''}>No</option>
+                </select>
+              </td>
+              <td>
+                <select class="select-input" id="sr-att-${i}" ${locked?'disabled':''}>
+                  <option value="">—</option>
+                  <option ${m.attendance==='Present'?'selected':''}>Present</option>
+                  <option ${m.attendance==='Absent'?'selected':''}>Absent</option>
+                  <option ${m.attendance==='Late'?'selected':''}>Late</option>
+                </select>
+              </td>
+              <td><input class="search-input" style="min-width:120px" id="sr-rem-${i}" value="${esc(m.remarks)}" ${locked?'disabled':''}/></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${!locked ? `
+    <div class="flex-gap mt16">
+      <button class="btn-secondary" onclick="saveSessionReportData(false)">Save Draft</button>
+      <button class="btn-primary" onclick="saveSessionReportData(true)">Submit Report</button>
+    </div>
+    <p class="form-hint mt8">Submitting locks the report and unlocks the next session's allocation. ${CU.role==='Admin'?'As Admin you can edit even after submission.':''}</p>
+    ` : ''}`;
+}
+
+async function saveSessionReportData(finalize) {
+  const entries = SR_DATA.map((m,i)=>({
+    itsId: m.itsId,
+    jacketWorn: document.getElementById(`sr-jacket-${i}`).value,
+    attendance: document.getElementById(`sr-att-${i}`).value,
+    remarks: document.getElementById(`sr-rem-${i}`).value.trim()
+  }));
+  if (finalize) {
+    const missing = entries.some(e => !e.jacketWorn || !e.attendance);
+    if (missing && !confirm('Some entries are missing Jacket Worn or Attendance. Submit anyway?')) return;
+  }
+  try {
+    await api('saveSessionReport', {
+      eventId:CU.eventId, rcId:SR_RC, date:SR_DATE, session:SR_SESSION,
+      entries:JSON.stringify(entries), finalize:finalize?'true':'false', savedBy:CU.itsId
+    });
+    showToast(finalize?'Report submitted.':'Draft saved.','success');
+    loadSessionReport();
+  } catch(e) { showToast('Failed: '+e.message,'error'); }
+}
+
+// ─── MY REPORTS (Member) ───────────────────────────────────────
+async function renderMyReports() {
+  if (!CU.eventId) return noEvent();
+  try {
+    const res = await api('getMyReports', { itsId:CU.itsId, eventId:CU.eventId });
+    const reps = res.reports || [];
+    document.getElementById('page-body').innerHTML = `
+      <div class="card">
+        <div class="card-title">My Session Reports — ${CACHE.activeEvent?esc(CACHE.activeEvent.name):''}</div>
+        ${reps.length ? `<div class="tbl-wrap"><table>
+          <thead><tr><th>Date</th><th>Session</th><th>Relay Center</th><th>Jacket Worn</th><th>Attendance</th><th>Remarks</th></tr></thead>
+          <tbody>${reps.map(r=>`<tr>
+            <td>${esc(r.date)}</td>
+            <td><span class="badge-${r.session==='Morning'?'morning':'evening'}">${esc(r.session)}</span></td>
+            <td>${esc(r.rcName)}</td>
+            <td>${esc(r.jacketWorn||'—')}</td>
+            <td>${esc(r.attendance||'—')}</td>
+            <td>${esc(r.remarks||'—')}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>` : '<p class="empty-state">No reports recorded for you yet.</p>'}
+      </div>`;
+  } catch(e) { document.getElementById('page-body').innerHTML = '<p class="empty-state">Failed to load.</p>'; }
 }
 
 // ─── MY ALLOCATION (Member) ────────────────────────────────────
