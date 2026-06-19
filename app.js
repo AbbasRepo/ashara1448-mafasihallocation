@@ -24,7 +24,8 @@ async function handleLogin() {
     if (!res.member) return showLoginErr('ITS ID not found. Contact your Admin.');
     CU = { itsId: its, name: res.member.fullName, role: res.role, eventId: res.activeEventId };
     sessionStorage.setItem('maf_user', JSON.stringify(CU));
-    bootApp();
+    if (res.appData) applyCache(res.appData);   // ← data already here, no 2nd round-trip
+    bootApp(!!res.appData);
   } catch (e) { showLoginErr('Connection error. Check config.js GAS URL.'); }
 }
 
@@ -42,13 +43,13 @@ function showLoginErr(m) {
 function hideLoginErr() { document.getElementById('login-error').classList.add('hidden'); }
 
 // ─── BOOT APP ─────────────────────────────────────────────────
-async function bootApp() {
+async function bootApp(cacheAlreadyLoaded) {
   showScreen('app-screen');
   document.getElementById('user-dot').textContent = CU.name.charAt(0).toUpperCase();
   document.getElementById('sb-name').textContent = CU.name;
   document.getElementById('sb-role').textContent = CU.role;
   buildNav();
-  await loadCache();
+  if (!cacheAlreadyLoaded) await loadCache();
   updateEventPill();
   navigateTo(defaultPage());
 }
@@ -119,17 +120,21 @@ function openSidebar()  { document.getElementById('sidebar').classList.add('open
 function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('visible'); }
 
 // ─── CACHE ────────────────────────────────────────────────────
+function applyCache(res) {
+  CACHE.members      = res.members      || [];
+  CACHE.events       = res.events       || [];
+  CACHE.activeEvent  = res.activeEvent  || null;
+  CACHE.relayCenters = res.relayCenters || [];
+  CACHE.zones        = res.zones        || [];
+  CACHE.eventMembers = res.eventMembers || [];
+  CACHE.rcMembers    = res.rcMembers    || [];
+  if (CACHE.activeEvent) CU.eventId = CACHE.activeEvent.id;
+}
+
 async function loadCache() {
   try {
     const res = await api('getAppData', { itsId: CU.itsId });
-    CACHE.members      = res.members      || [];
-    CACHE.events       = res.events       || [];
-    CACHE.activeEvent  = res.activeEvent  || null;
-    CACHE.relayCenters = res.relayCenters || [];
-    CACHE.zones        = res.zones        || [];
-    CACHE.eventMembers = res.eventMembers || [];
-    CACHE.rcMembers    = res.rcMembers    || [];
-    if (CACHE.activeEvent) CU.eventId = CACHE.activeEvent.id;
+    applyCache(res);
   } catch(e) { CACHE = { members:[], events:[], relayCenters:[], zones:[], eventMembers:[], rcMembers:[] }; }
 }
 
@@ -140,16 +145,20 @@ function updateEventPill() {
 
 // ─── DASHBOARD ────────────────────────────────────────────────
 async function renderDashboard() {
-  let stats = {};
-  try { const r = await api('getDashboardStats', { eventId: CU.eventId }); stats = r; } catch(e) {}
+  const evId = CU.eventId;
+  const stats = {
+    eventMembers: CACHE.eventMembers.filter(em => em.eventId === evId).length,
+    relayCenters: CACHE.relayCenters.filter(r => r.eventId === evId).length,
+    zones:        CACHE.zones.filter(z => z.eventId === evId).length,
+  };
   const ev = CACHE.activeEvent;
   document.getElementById('page-body').innerHTML = `
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-val">${stats.eventMembers||0}</div><div class="stat-lbl">Active Mafasih</div></div>
       <div class="stat-card"><div class="stat-icon">🏛️</div><div class="stat-val">${stats.relayCenters||0}</div><div class="stat-lbl">Relay Centers</div></div>
       <div class="stat-card"><div class="stat-icon">🗂️</div><div class="stat-val">${stats.zones||0}</div><div class="stat-lbl">Zones</div></div>
-      <div class="stat-card"><div class="stat-icon">🧥</div><div class="stat-val">${stats.jacketBalance||0}</div><div class="stat-lbl">Jacket Balances Due</div></div>
-      <div class="stat-card"><div class="stat-icon">💰</div><div class="stat-val">${stats.financeUnits||0}</div><div class="stat-lbl">Contribution Units</div></div>
+      <div class="stat-card"><div class="stat-icon">🧥</div><div class="stat-val" id="stat-jacket">…</div><div class="stat-lbl">Jacket Balances Due</div></div>
+      <div class="stat-card"><div class="stat-icon">💰</div><div class="stat-val" id="stat-finance">…</div><div class="stat-lbl">Contribution Units</div></div>
     </div>
     <div class="card">
       <div class="card-title">Active Event</div>
@@ -159,6 +168,21 @@ async function renderDashboard() {
         <div class="info-row"><span class="info-lbl">Status</span><span class="badge-status bs-active">Active</span></div>
       ` : '<p class="empty-state">No active event. Create one under Events.</p>'}
     </div>`;
+
+  // Lazy-load the two heavier stats without blocking the page render
+  if (CU.eventId) {
+    api('getDashboardStats', { eventId: CU.eventId }).then(r => {
+      const j = document.getElementById('stat-jacket');
+      const f = document.getElementById('stat-finance');
+      if (j) j.textContent = r.jacketBalance || 0;
+      if (f) f.textContent = r.financeUnits || 0;
+    }).catch(()=>{
+      const j = document.getElementById('stat-jacket');
+      const f = document.getElementById('stat-finance');
+      if (j) j.textContent = '—';
+      if (f) f.textContent = '—';
+    });
+  }
 }
 
 // ─── EVENTS ───────────────────────────────────────────────────
