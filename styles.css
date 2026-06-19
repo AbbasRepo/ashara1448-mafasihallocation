@@ -1,20 +1,20 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#f5f3ee;
+  --bg:#f4f5f6;
   --surface:#ffffff;
-  --surface2:#eeebe4;
-  --border:#ddd9d0;
-  --text:#1c1a16;
-  --muted:#7a7468;
-  --primary:#1a3a2e;
-  --primary-h:#122a20;
-  --accent:#b8962e;
-  --accent-light:#f5edd6;
+  --surface2:#e9ebed;
+  --border:#d7dbdf;
+  --text:#1c2024;
+  --muted:#6b7280;
+  --primary:#3a4047;
+  --primary-h:#2a2f35;
+  --accent:#8b94a0;
+  --accent-light:#e8eaed;
   --danger:#b91c1c;
   --success:#15803d;
   --info:#1d4ed8;
-  --morning:#f59e0b;
-  --evening:#6d28d9;
+  --morning:#d97706;
+  --evening:#5b21b6;
   --r:10px;
   --shadow:0 2px 16px rgba(0,0,0,0.09);
   --sidebar-w:248px;
@@ -29,7 +29,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 
 /* LOGIN */
 .login-wrap{flex:1;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(145deg,#0f2318 0%,#1a3a2e 55%,#2a5c46 100%);padding:24px}
+  background:linear-gradient(145deg,#23272b 0%,#3a4047 55%,#545b63 100%);padding:24px}
 .login-card{background:var(--surface);border-radius:18px;padding:40px;width:100%;max-width:400px;
   box-shadow:0 32px 80px rgba(0,0,0,0.4)}
 .login-brand{display:flex;align-items:center;gap:14px;margin-bottom:32px}
@@ -213,6 +213,7 @@ tr:hover td{background:#fafaf8}
 .member-chip button{background:none;border:none;cursor:pointer;color:var(--muted);
   font-size:12px;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;padding:0}
 .member-chip button:hover{background:rgba(0,0,0,0.1);color:var(--danger)}
+.member-chip.lead-chip{background:#e0e7ff;border-color:#c7d2fe;color:#3730a3}
 .zone-empty{font-size:12px;color:var(--muted);font-style:italic}
 .zone-add{display:flex;gap:6px}
 .zone-add-select{flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;
